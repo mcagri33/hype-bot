@@ -310,21 +310,41 @@ function scamHeuristics(go){
   let pen=0;
 
   const bool = k => (go[k]==="1" || go[k]===1 || go[k]===true);
+  const buyTax = parseFloat(go.buy_tax || 0);
+  const sellTax = parseFloat(go.sell_tax || 0);
 
-  if(bool("is_honeypot")) { flags.push("Honeypot"); pen+=70; }
-  if(parseFloat(go.buy_tax)>10) { flags.push("High Buy Tax"); pen+=20; }
-  if(parseFloat(go.sell_tax)>15){ flags.push("High Sell Tax"); pen+=20; }
-  if(bool("is_proxy")) { flags.push("Proxy"); pen+=10; }
-  if(bool("is_mintable")) { flags.push("Mintable"); pen+=15; }
-  if(bool("is_blacklisted")) { flags.push("Blacklist Enabled"); pen+=25; }
-  if(bool("can_take_back_ownership")) { flags.push("Owner Can Reclaim"); pen+=15; }
-  if(bool("slippage_modifiable")) { flags.push("Slippage Modifiable"); pen+=10; }
-  if(bool("is_airdrop_scam")) { flags.push("Airdrop Scam Pattern"); pen+=25; }
-  if(bool("selfdestruct")) { flags.push("Selfdestruct Present"); pen+=25; }
+  // KRİTİK: Honeypot kontrolü
+  if(bool("is_honeypot")) { flags.push("🍯 HONEYPOT - SCAM!"); pen+=100; }
+  
+  // KRİTİK: Tax kontrolleri sıkılaştırıldı
+  if(buyTax >= 99) { flags.push("🚨 SCAM: 99%+ Buy Tax"); pen+=100; }
+  else if(buyTax >= 50) { flags.push("⚠️ Very High Buy Tax (" + buyTax + "%)"); pen+=80; }
+  else if(buyTax >= 20) { flags.push("High Buy Tax (" + buyTax + "%)"); pen+=40; }
+  else if(buyTax >= 10) { flags.push("Medium Buy Tax (" + buyTax + "%)"); pen+=20; }
+
+  if(sellTax >= 99) { flags.push("🚨 SCAM: 99%+ Sell Tax"); pen+=100; }
+  else if(sellTax >= 50) { flags.push("⚠️ Very High Sell Tax (" + sellTax + "%)"); pen+=80; }
+  else if(sellTax >= 20) { flags.push("High Sell Tax (" + sellTax + "%)"); pen+=40; }
+  else if(sellTax >= 15) { flags.push("Medium Sell Tax (" + sellTax + "%)"); pen+=20; }
+
+  // Diğer kritik kontroller
+  if(bool("is_proxy")) { flags.push("Proxy Contract"); pen+=30; }
+  if(bool("is_mintable")) { flags.push("Mintable Token"); pen+=25; }
+  if(bool("is_blacklisted")) { flags.push("🚨 Blacklist Function"); pen+=60; }
+  if(bool("can_take_back_ownership")) { flags.push("Owner Can Reclaim"); pen+=40; }
+  if(bool("slippage_modifiable")) { flags.push("Slippage Modifiable"); pen+=30; }
+  if(bool("is_airdrop_scam")) { flags.push("🚨 Airdrop Scam Pattern"); pen+=70; }
+  if(bool("selfdestruct")) { flags.push("🚨 Selfdestruct Present"); pen+=80; }
+  
   const ownerPerc = parseFloat(go.owner_percent||go.owner_balance_percent||0);
-  if(ownerPerc>30){ flags.push(`Owner ${ownerPerc}%`); pen+=25; }
+  if(ownerPerc >= 80){ flags.push(`🚨 Owner Controls ${ownerPerc}%`); pen+=80; }
+  else if(ownerPerc >= 50){ flags.push(`⚠️ Owner Controls ${ownerPerc}%`); pen+=50; }
+  else if(ownerPerc >= 30){ flags.push(`Owner Controls ${ownerPerc}%`); pen+=25; }
 
-  return { flags, scorePen:pen, isScam: pen>=50 || flags.includes("Honeypot") };
+  // SCAM tespiti - çok daha sıkı
+  const isScam = pen >= 80 || flags.some(f => f.includes("🚨")) || buyTax >= 99 || sellTax >= 99;
+  
+  return { flags, scorePen:pen, isScam };
 }
 
 /* === TRUST SCORE === */
@@ -332,9 +352,20 @@ function calcTrust(go,social){
   let t=100;
   if(go){
     const sh = scamHeuristics(go);
+    
+    // KRİTİK: SCAM ise direkt 0 puan
+    if(sh.isScam) {
+      return 0;
+    }
+    
     t -= sh.scorePen;
   }
-  if(social?.galaxy_score) t+=Math.floor(social.galaxy_score/20);
+  
+  // Sosyal skor bonusu (sadece scam değilse)
+  if(social?.galaxy_score && t > 0) {
+    t += Math.floor(social.galaxy_score/20);
+  }
+  
   return Math.max(0,Math.min(100,t));
 }
 
@@ -369,8 +400,20 @@ function buildReport({addr,chain,trust,go,social,verify,dex,pump, xscan, reddit,
   const scam = scamHeuristics(go);
   let txt = `🔎 **Token Analysis Report**\n\n`;
   txt += `📄 Contract: \`${addr.slice(0,8)}...${addr.slice(-6)}\`\n⛓️ Chain: ${chain.toUpperCase()}\n\n`;
-  txt += `📊 **Trust Score:** ${trust}/100 — ${trust>=70?"🟢 SAFE":trust>=40?"🟡 MEDIUM":"🔴 HIGH"}\n`;
-  if(scam.isScam) txt += `\n🚨 **SCAM Signals:** ${scam.flags.join(", ")}\n`;
+  
+  // KRİTİK: SCAM uyarısı en üste
+  if(scam.isScam) {
+    txt += `🚨 **DANGER - POTENTIAL SCAM!** 🚨\n`;
+    txt += `🚫 **DO NOT BUY THIS TOKEN!** 🚫\n\n`;
+    txt += `🚨 **SCAM Signals:** ${scam.flags.join(", ")}\n\n`;
+  }
+  
+  txt += `📊 **Trust Score:** ${trust}/100 — ${trust===0?"🚨 SCAM":trust>=70?"🟢 SAFE":trust>=40?"🟡 MEDIUM":"🔴 HIGH RISK"}\n`;
+  
+  if(scam.flags.length > 0 && !scam.isScam) {
+    txt += `⚠️ **Risk Flags:** ${scam.flags.join(", ")}\n`;
+  }
+  
   txt += `\n`;
 
   if(verify && (chain==="eth"||chain==="bsc")){
@@ -378,12 +421,43 @@ function buildReport({addr,chain,trust,go,social,verify,dex,pump, xscan, reddit,
   }
 
   if(go){
-    txt += `🛡 **GoPlus Security**\n`;
-    txt += `• 🍯 Honeypot: ${go.is_honeypot==="1"?"❌ Detected":"✅ Safe"}\n`;
-    txt += `• 💰 BuyTax: ${go.buy_tax ?? "?"}% | 💸 SellTax: ${go.sell_tax ?? "?"}%\n`;
+    txt += `🛡 **GoPlus Security Analysis**\n`;
+    
+    // Honeypot - en kritik
+    if(go.is_honeypot==="1") {
+      txt += `• 🚨 **HONEYPOT DETECTED - SCAM!** 🚨\n`;
+    } else {
+      txt += `• 🍯 Honeypot: ✅ Safe\n`;
+    }
+    
+    // Tax bilgileri - renkli uyarılar
+    const buyTax = parseFloat(go.buy_tax || 0);
+    const sellTax = parseFloat(go.sell_tax || 0);
+    
+    let taxWarning = "";
+    if(buyTax >= 99 || sellTax >= 99) taxWarning = " 🚨 SCAM TAX!";
+    else if(buyTax >= 50 || sellTax >= 50) taxWarning = " ⚠️ VERY HIGH!";
+    else if(buyTax >= 20 || sellTax >= 20) taxWarning = " ⚠️ HIGH";
+    
+    txt += `• 💰 BuyTax: ${buyTax}% | 💸 SellTax: ${sellTax}%${taxWarning}\n`;
+    
+    // Diğer güvenlik kontrolleri
     txt += `• Proxy: ${go.is_proxy==="1"?"⚠️ Yes":"✅ No"} | Mintable: ${go.is_mintable==="1"?"⚠️ Yes":"✅ No"}\n`;
-    if(go.is_blacklisted) txt += `• Blacklist Enabled: ${go.is_blacklisted==="1"?"⚠️ Yes":"No"}\n`;
-    if(go.owner_percent)  txt += `• Owner %: ${go.owner_percent}\n`;
+    
+    if(go.is_blacklisted==="1") {
+      txt += `• 🚨 **Blacklist Function Detected!**\n`;
+    }
+    
+    const ownerPerc = parseFloat(go.owner_percent || go.owner_balance_percent || 0);
+    if(ownerPerc > 0) {
+      let ownerWarning = "";
+      if(ownerPerc >= 80) ownerWarning = " 🚨 EXTREME RISK!";
+      else if(ownerPerc >= 50) ownerWarning = " ⚠️ HIGH RISK";
+      else if(ownerPerc >= 30) ownerWarning = " ⚠️ MEDIUM RISK";
+      
+      txt += `• Owner Controls: ${ownerPerc}%${ownerWarning}\n`;
+    }
+    
     txt += `\n`;
   }
 
@@ -720,11 +794,55 @@ bot.help(async ctx=>{
 /setprofile [low/medium/high] – Set risk profile
 /language en|tr|ru|de|zh – Change language
 /stats – User statistics
+/testscam – Test scam detection (demo)
 /help – This help
 `,{parse_mode:"Markdown"});
   } catch(e) {
     console.error('Help command error:', e.message);
     await ctx.reply("❌ An error occurred while showing help.");
+  }
+});
+
+// /testscam - Scam detection test
+bot.command("testscam", async ctx=>{
+  try {
+    // Test case: 100% tax scam token
+    const testScamData = {
+      is_honeypot: "0",
+      buy_tax: "100",
+      sell_tax: "100",
+      is_proxy: "0",
+      is_mintable: "1",
+      is_blacklisted: "1",
+      owner_percent: "90"
+    };
+    
+    const scamResult = scamHeuristics(testScamData);
+    const trustScore = calcTrust(testScamData, null);
+    
+    let txt = `🧪 **Scam Detection Test**\n\n`;
+    txt += `📊 **Test Token (100% Tax):**\n`;
+    txt += `• Buy Tax: 100%\n`;
+    txt += `• Sell Tax: 100%\n`;
+    txt += `• Owner: 90%\n`;
+    txt += `• Blacklist: Yes\n\n`;
+    
+    txt += `🔍 **Detection Results:**\n`;
+    txt += `• Trust Score: ${trustScore}/100\n`;
+    txt += `• Is Scam: ${scamResult.isScam ? "🚨 YES" : "✅ NO"}\n`;
+    txt += `• Penalty Points: ${scamResult.scorePen}\n\n`;
+    
+    if(scamResult.flags.length > 0) {
+      txt += `⚠️ **Detected Flags:**\n`;
+      scamResult.flags.forEach(flag => {
+        txt += `• ${flag}\n`;
+      });
+    }
+    
+    await ctx.reply(txt, {parse_mode: "Markdown"});
+  } catch(e) {
+    console.error('Test scam command error:', e.message);
+    await ctx.reply("❌ An error occurred during scam test.");
   }
 });
 
